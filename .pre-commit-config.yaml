@@ -1,0 +1,64 @@
+# =============================================================================
+# Pre-commit Configuration
+# =============================================================================
+# Run quality checks locally before committing.
+# Install: pip install pre-commit && pre-commit install
+# =============================================================================
+
+repos:
+  # ---------------------------------------------------------------------------
+  # Terraform formatting and validation
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.86.0
+    hooks:
+      - id: terraform_fmt
+        name: Terraform Format
+        description: Rewrites Terraform files to canonical format
+
+      - id: terraform_validate
+        name: Terraform Validate
+        description: Validates Terraform configuration files
+
+      - id: terraform_tflint
+        name: TFLint
+        description: Lints Terraform code for possible errors and best practices
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
+
+      - id: terraform_docs
+        name: Terraform Docs
+        description: Generate documentation from Terraform modules
+        args:
+          - --hook-config=--path-to-file=README.md
+          - --hook-config=--add-to-existing-file=true
+          - --hook-config=--create-file-if-not-exist=true
+
+  # ---------------------------------------------------------------------------
+  # Security scanning
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/aquasecurity/tfsec
+    rev: v1.28.4
+    hooks:
+      - id: tfsec
+        name: tfsec Security Scan
+        description: Security scanner for Terraform code
+
+  # ---------------------------------------------------------------------------
+  # General code quality
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim Trailing Whitespace
+      - id: end-of-file-fixer
+        name: Fix End of Files
+      - id: check-yaml
+        name: Check YAML Syntax
+      - id: check-json
+        name: Check JSON Syntax
+      - id: check-merge-conflict
+        name: Check for Merge Conflicts
+      - id: detect-private-key
+        name: Detect Private Keys

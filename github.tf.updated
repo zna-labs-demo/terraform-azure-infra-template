@@ -1,0 +1,150 @@
+# =============================================================================
+# GitHub Resources - Updated for Template Repository
+# =============================================================================
+# This file replaces github.tf in terraform-azure-subscription-vending
+# It creates repositories from a template instead of empty repos.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Template Repository (Created Once)
+# -----------------------------------------------------------------------------
+# This repository serves as the template for all vended infrastructure repos.
+# It must be marked as a "template repository" in GitHub settings.
+# -----------------------------------------------------------------------------
+resource "github_repository" "template" {
+  name        = "terraform-azure-infra-template"
+  description = "Template repository for vended Azure infrastructure - DO NOT MODIFY DIRECTLY"
+  visibility  = "public"
+  is_template = true  # This marks it as a template repository
+
+  auto_init = true
+
+  has_issues   = false
+  has_projects = false
+  has_wiki     = false
+
+  # Prevent accidental changes
+  archive_on_destroy = true
+}
+
+# -----------------------------------------------------------------------------
+# Application Infrastructure Repositories (From Template)
+# -----------------------------------------------------------------------------
+resource "github_repository" "app_repo" {
+  for_each = local.subscriptions
+
+  name        = "terraform-azure-infra-${each.key}"
+  description = "Infrastructure repository for ${each.key} - Owner: ${each.value.owner_email}"
+  visibility  = "public"
+
+  # USE THE TEMPLATE REPOSITORY
+  template {
+    owner                = var.github_org
+    repository           = github_repository.template.name
+    include_all_branches = false  # Only copy main branch
+  }
+
+  has_issues   = true
+  has_projects = false
+  has_wiki     = false
+
+  # Enable branch protection after creation
+  # (handled by separate resource below)
+
+  depends_on = [github_repository.template]
+}
+
+# -----------------------------------------------------------------------------
+# Branch Protection Rules
+# -----------------------------------------------------------------------------
+resource "github_branch_protection" "main" {
+  for_each = local.subscriptions
+
+  repository_id = github_repository.app_repo[each.key].node_id
+  pattern       = "main"
+
+  # Require PR reviews
+  required_pull_request_reviews {
+    dismiss_stale_reviews           = true
+    require_code_owner_reviews      = false
+    required_approving_review_count = 1
+  }
+
+  # Require status checks to pass
+  required_status_checks {
+    strict   = true
+    contexts = ["QualityGates / TerraformFormat", "QualityGates / TerraformValidate", "QualityGates / TFLint"]
+  }
+
+  # Prevent force pushes
+  allows_force_pushes = false
+  allows_deletions    = false
+
+  # Enforce for admins too
+  enforce_admins = true
+}
+
+# -----------------------------------------------------------------------------
+# Repository Files - Dynamic Content (Overwrites Template Defaults)
+# -----------------------------------------------------------------------------
+# Update the README with app-specific information after creation
+resource "github_repository_file" "app_readme" {
+  for_each = local.subscriptions
+
+  repository = github_repository.app_repo[each.key].name
+  branch     = "main"
+  file       = "README.md"
+  content    = templatefile("${path.module}/templates/README.md.tftpl", {
+    app_id          = each.key
+    owner_email     = each.value.owner_email
+    cost_center     = each.value.cost_center
+    subscription_id = each.value.subscription_id
+    timestamp       = each.value.timestamp
+    tfc_workspace   = "${each.key}n1d01-app-infra"
+    ado_project     = "${each.key}n1"
+    github_org      = var.github_org
+  })
+
+  commit_message      = "Initialize infrastructure repository for ${each.key}"
+  overwrite_on_create = true
+
+  depends_on = [github_repository.app_repo]
+}
+
+# Create a tfvars file with app-specific defaults
+resource "github_repository_file" "app_tfvars" {
+  for_each = local.subscriptions
+
+  repository = github_repository.app_repo[each.key].name
+  branch     = "main"
+  file       = "terraform.tfvars.example"
+  content    = <<-EOT
+    # =============================================================================
+    # Terraform Variables for ${each.key}
+    # =============================================================================
+    # Copy this file to terraform.tfvars and customize as needed.
+    # Note: app_id is automatically set via TFC workspace variables.
+    # =============================================================================
+
+    # app_id is set automatically by subscription vending - DO NOT CHANGE
+    # app_id = "${each.key}"
+
+    environment = "dev"
+    location    = "eastus"
+
+    # Enable optional resources
+    enable_storage_account = false
+    enable_key_vault       = false
+
+    # Additional tags
+    tags = {
+      cost_center = "${each.value.cost_center}"
+      owner       = "${each.value.owner_email}"
+    }
+  EOT
+
+  commit_message      = "Add terraform.tfvars.example for ${each.key}"
+  overwrite_on_create = true
+
+  depends_on = [github_repository_file.app_readme]
+}
