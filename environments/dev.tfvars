@@ -25,7 +25,7 @@ location    = "eastus"
 # Feature Flags
 # -----------------------------------------------------------------------------
 # Dev environment - enable for development/testing
-enable_storage_account = false
+enable_storage_account = true
 enable_key_vault       = false
 
 # -----------------------------------------------------------------------------
