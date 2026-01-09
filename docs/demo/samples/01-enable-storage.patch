@@ -1,0 +1,21 @@
+# Sample Change 1: Enable Storage Account
+# This is a safe change that demonstrates the happy path
+
+# Apply this patch to environments/dev.tfvars:
+# Change enable_storage_account from false to true
+
+--- a/environments/dev.tfvars
++++ b/environments/dev.tfvars
+@@ -23,7 +23,7 @@ location    = "eastus"
+ # -----------------------------------------------------------------------------
+ # Feature Flags
+ # -----------------------------------------------------------------------------
+ # Dev environment - enable for development/testing
+-enable_storage_account = false
++enable_storage_account = true
+ enable_key_vault       = false
+
+# Expected Result:
+# - All quality gates PASS
+# - Dev deployment creates a storage account
+# - QA/Prod wait for approval
