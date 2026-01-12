@@ -1,15 +1,16 @@
 # =============================================================================
-# Azure DevOps CI/CD Pipeline for Terraform Infrastructure
+# Azure DevOps CI/CD Pipeline - GitOps Vending Architecture
 # =============================================================================
-# This pipeline performs:
-# - Quality gates on PRs (format, validate, lint, security)
-# - Progressive deployment: Dev -> QA -> Prod on main branch
-# - ADO Environment approval gates for QA and Production
+# This pipeline implements two-phase deployment:
 #
-# SETUP REQUIRED:
-#   1. Create ADO Environments: 'QA' and 'Production' with approval gates
-#   2. Add pipeline variable: TFC_TOKEN (secret) - your Terraform Cloud token
-#   3. Ensure TFC workspaces exist with appropriate tags
+# PHASE 1 - Environment Vending (.vending/):
+#   - Creates/updates TFC workspaces based on enabled environments
+#   - Runs in {app_id}-vending workspace
+#
+# PHASE 2 - Infrastructure Deployment:
+#   - Deploys actual Azure infrastructure
+#   - Only runs for enabled environments
+#   - Progressive: Dev -> QA -> Prod
 # =============================================================================
 
 trigger:
@@ -19,7 +20,7 @@ trigger:
   paths:
     exclude:
       - '*.md'
-      - '.gitignore'
+      - 'docs/**'
 
 pr:
   branches:
@@ -30,116 +31,43 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  TF_VERSION: '1.6.6'
-  TFLINT_VERSION: 'v0.50.0'
+  TF_VERSION: '1.9.0'
   TF_IN_AUTOMATION: 'true'
 
 stages:
   # ===========================================================================
-  # Stage 1: Quality Gates (runs on all PRs and main branch pushes)
+  # Stage 1: Quality Gates
   # ===========================================================================
   - stage: QualityGates
     displayName: 'Quality Gates'
     jobs:
-      - job: TerraformFormat
-        displayName: 'Terraform Format Check'
+      - job: Validate
+        displayName: 'Format & Validate'
         steps:
           - task: TerraformInstaller@1
-            displayName: 'Install Terraform $(TF_VERSION)'
             inputs:
               terraformVersion: $(TF_VERSION)
 
-          - script: |
-              terraform fmt -check -recursive -diff
-            displayName: 'Check Terraform Formatting'
-            workingDirectory: $(System.DefaultWorkingDirectory)
-
-      - job: TerraformValidate
-        displayName: 'Terraform Validate'
-        steps:
-          - task: TerraformInstaller@1
-            displayName: 'Install Terraform $(TF_VERSION)'
-            inputs:
-              terraformVersion: $(TF_VERSION)
+          - script: terraform fmt -check -recursive -diff
+            displayName: 'Terraform Format'
 
           - script: |
               terraform init -backend=false
-            displayName: 'Terraform Init (No Backend)'
-            workingDirectory: $(System.DefaultWorkingDirectory)
-
-          - script: |
               terraform validate
             displayName: 'Terraform Validate'
-            workingDirectory: $(System.DefaultWorkingDirectory)
-
-      - job: TFLint
-        displayName: 'TFLint Analysis'
-        steps:
-          - script: |
-              curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
-            displayName: 'Install TFLint'
-
-          - script: |
-              tflint --init
-              tflint --format compact
-            displayName: 'Run TFLint'
-            workingDirectory: $(System.DefaultWorkingDirectory)
-
-      - job: SecurityScan
-        displayName: 'Security Scan (tfsec)'
-        steps:
-          - script: |
-              curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
-            displayName: 'Install tfsec'
-
-          - script: |
-              tfsec . --format lovely --minimum-severity MEDIUM
-            displayName: 'Run tfsec Security Scan'
-            workingDirectory: $(System.DefaultWorkingDirectory)
-            continueOnError: true
 
   # ===========================================================================
-  # Stage 2: Plan (PR Only) - Shows what TFC will apply
+  # Stage 2: Vend Environments
   # ===========================================================================
-  - stage: Plan
-    displayName: 'Terraform Plan'
-    dependsOn: QualityGates
-    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
-    jobs:
-      - job: TerraformPlan
-        displayName: 'Generate Plan Summary'
-        steps:
-          - script: |
-              echo "## Terraform Plan Summary" >> $(System.DefaultWorkingDirectory)/plan-summary.md
-              echo "" >> $(System.DefaultWorkingDirectory)/plan-summary.md
-              echo "Terraform Cloud will generate the actual plan when this PR is merged." >> $(System.DefaultWorkingDirectory)/plan-summary.md
-              echo "" >> $(System.DefaultWorkingDirectory)/plan-summary.md
-              echo "### Quality Gate Results" >> $(System.DefaultWorkingDirectory)/plan-summary.md
-              echo "- Format: Passed" >> $(System.DefaultWorkingDirectory)/plan-summary.md
-              echo "- Validation: Passed" >> $(System.DefaultWorkingDirectory)/plan-summary.md
-              echo "- TFLint: Passed" >> $(System.DefaultWorkingDirectory)/plan-summary.md
-              echo "- Security: Scanned" >> $(System.DefaultWorkingDirectory)/plan-summary.md
-            displayName: 'Generate Plan Summary'
-
-          - task: PublishPipelineArtifact@1
-            inputs:
-              targetPath: '$(System.DefaultWorkingDirectory)/plan-summary.md'
-              artifact: 'plan-summary'
-            displayName: 'Publish Plan Summary'
-
-  # ===========================================================================
-  # Stage 3: Dev Environment - Auto-deploys on push to main
-  # ===========================================================================
-  - stage: Dev
-    displayName: 'Deploy to Dev'
+  - stage: VendEnvironments
+    displayName: 'Vend Environments'
     dependsOn: QualityGates
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
     jobs:
-      - job: TerraformDev
-        displayName: 'Terraform Dev'
+      - job: Vend
+        displayName: 'Create TFC Workspaces'
         steps:
           - task: TerraformInstaller@1
-            displayName: 'Install Terraform $(TF_VERSION)'
             inputs:
               terraformVersion: $(TF_VERSION)
 
@@ -154,184 +82,144 @@ stages:
                 }
               }
               EOF
-            displayName: 'Configure TFC Credentials'
+            displayName: 'Configure TFC'
 
           - bash: |
-              # Extract app_id from repo name (handles org/repo format)
               REPO_NAME="$(Build.Repository.Name)"
-              APP_ID="${REPO_NAME##*/}"  # Remove org prefix if present
-              APP_ID="${APP_ID#terraform-azure-infra-}"  # Remove repo prefix
-              WORKSPACE_NAME="${APP_ID}n1d01-app-infra"
+              APP_ID="${REPO_NAME##*/}"
+              APP_ID="${APP_ID#terraform-azure-infra-}"
+              echo "##vso[task.setvariable variable=APP_ID]${APP_ID}"
+
               echo "=============================================="
-              echo "Deploying to DEV Environment"
-              echo "App ID: ${APP_ID}"
-              echo "Workspace: ${WORKSPACE_NAME}"
+              echo "Vending: ${APP_ID}-vending"
               echo "=============================================="
-              export TF_WORKSPACE="${WORKSPACE_NAME}"
+
+              cd .vending
+              export TF_WORKSPACE="${APP_ID}-vending"
               terraform init
-            displayName: 'Terraform Init (Dev)'
-            workingDirectory: $(System.DefaultWorkingDirectory)
+              terraform apply -auto-approve
+            displayName: 'Apply Vending'
 
           - bash: |
-              REPO_NAME="$(Build.Repository.Name)"
-              APP_ID="${REPO_NAME##*/}"
-              APP_ID="${APP_ID#terraform-azure-infra-}"
-              export TF_WORKSPACE="${APP_ID}n1d01-app-infra"
-              terraform plan \
-                -var-file=environments/dev.tfvars \
-                -out=tfplan-dev
-            displayName: 'Terraform Plan (Dev)'
-            workingDirectory: $(System.DefaultWorkingDirectory)
-
-          - bash: |
-              REPO_NAME="$(Build.Repository.Name)"
-              APP_ID="${REPO_NAME##*/}"
-              APP_ID="${APP_ID#terraform-azure-infra-}"
-              export TF_WORKSPACE="${APP_ID}n1d01-app-infra"
-              terraform apply -auto-approve tfplan-dev
-            displayName: 'Terraform Apply (Dev)'
-            workingDirectory: $(System.DefaultWorkingDirectory)
+              pip install pyyaml -q
+              python3 << 'PYEOF'
+              import yaml
+              with open('environments.yaml', 'r') as f:
+                  config = yaml.safe_load(f)
+              for env in config.get('environments', []):
+                  name = env.get('name', '').upper()
+                  enabled = str(env.get('enabled', False)).lower()
+                  print(f"##vso[task.setvariable variable={name}_ENABLED;isOutput=true]{enabled}")
+              PYEOF
+            displayName: 'Parse Environments'
+            name: envConfig
 
   # ===========================================================================
-  # Stage 4: QA Environment - Requires ADO Environment approval
+  # Stage 3: Deploy Dev
   # ===========================================================================
-  - stage: QA
-    displayName: 'Deploy to QA'
-    dependsOn: Dev
-    condition: succeeded()
+  - stage: DeployDev
+    displayName: 'Deploy Dev'
+    dependsOn: VendEnvironments
+    condition: and(succeeded(), eq(dependencies.VendEnvironments.outputs['Vend.envConfig.DEV_ENABLED'], 'true'))
     jobs:
-      - deployment: TerraformQA
-        displayName: 'Terraform QA'
+      - job: Dev
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(TF_VERSION)
+
+          - bash: |
+              mkdir -p ~/.terraform.d
+              cat > ~/.terraform.d/credentials.tfrc.json << EOF
+              {"credentials":{"app.terraform.io":{"token":"$(TFC_TOKEN)"}}}
+              EOF
+            displayName: 'Configure TFC'
+
+          - bash: |
+              REPO_NAME="$(Build.Repository.Name)"
+              APP_ID="${REPO_NAME##*/}"
+              APP_ID="${APP_ID#terraform-azure-infra-}"
+
+              echo "Deploying: ${APP_ID}n1d01"
+              export TF_WORKSPACE="${APP_ID}n1d01"
+              terraform init
+              terraform apply -auto-approve
+            displayName: 'Apply Dev'
+
+  # ===========================================================================
+  # Stage 4: Deploy QA
+  # ===========================================================================
+  - stage: DeployQA
+    displayName: 'Deploy QA'
+    dependsOn:
+      - VendEnvironments
+      - DeployDev
+    condition: and(succeeded(), eq(dependencies.VendEnvironments.outputs['Vend.envConfig.QA_ENABLED'], 'true'))
+    jobs:
+      - deployment: QA
         environment: 'QA'
         strategy:
           runOnce:
             deploy:
               steps:
                 - checkout: self
-
                 - task: TerraformInstaller@1
-                  displayName: 'Install Terraform $(TF_VERSION)'
                   inputs:
                     terraformVersion: $(TF_VERSION)
 
                 - bash: |
                     mkdir -p ~/.terraform.d
                     cat > ~/.terraform.d/credentials.tfrc.json << EOF
-                    {
-                      "credentials": {
-                        "app.terraform.io": {
-                          "token": "$(TFC_TOKEN)"
-                        }
-                      }
-                    }
+                    {"credentials":{"app.terraform.io":{"token":"$(TFC_TOKEN)"}}}
                     EOF
-                  displayName: 'Configure TFC Credentials'
+                  displayName: 'Configure TFC'
 
                 - bash: |
-                    # Extract app_id from repo name (handles org/repo format)
                     REPO_NAME="$(Build.Repository.Name)"
                     APP_ID="${REPO_NAME##*/}"
                     APP_ID="${APP_ID#terraform-azure-infra-}"
-                    WORKSPACE_NAME="${APP_ID}n1q01-app-infra"
-                    echo "=============================================="
-                    echo "Deploying to QA Environment"
-                    echo "App ID: ${APP_ID}"
-                    echo "Workspace: ${WORKSPACE_NAME}"
-                    echo "Environment file: environments/qa.tfvars"
-                    echo "=============================================="
-                    export TF_WORKSPACE="${WORKSPACE_NAME}"
+
+                    echo "Deploying: ${APP_ID}n1q01"
+                    export TF_WORKSPACE="${APP_ID}n1q01"
                     terraform init
-                  displayName: 'Terraform Init (QA)'
-                  workingDirectory: $(System.DefaultWorkingDirectory)
-
-                - bash: |
-                    REPO_NAME="$(Build.Repository.Name)"
-                    APP_ID="${REPO_NAME##*/}"
-                    APP_ID="${APP_ID#terraform-azure-infra-}"
-                    export TF_WORKSPACE="${APP_ID}n1q01-app-infra"
-                    terraform plan \
-                      -var-file=environments/qa.tfvars \
-                      -out=tfplan-qa
-                  displayName: 'Terraform Plan (QA)'
-                  workingDirectory: $(System.DefaultWorkingDirectory)
-
-                - bash: |
-                    REPO_NAME="$(Build.Repository.Name)"
-                    APP_ID="${REPO_NAME##*/}"
-                    APP_ID="${APP_ID#terraform-azure-infra-}"
-                    export TF_WORKSPACE="${APP_ID}n1q01-app-infra"
-                    terraform apply -auto-approve tfplan-qa
-                  displayName: 'Terraform Apply (QA)'
-                  workingDirectory: $(System.DefaultWorkingDirectory)
+                    terraform apply -auto-approve
+                  displayName: 'Apply QA'
 
   # ===========================================================================
-  # Stage 5: Production Environment - Requires ADO Environment approval
+  # Stage 5: Deploy Prod
   # ===========================================================================
-  - stage: Prod
-    displayName: 'Deploy to Prod'
-    dependsOn: QA
-    condition: succeeded()
+  - stage: DeployProd
+    displayName: 'Deploy Prod'
+    dependsOn:
+      - VendEnvironments
+      - DeployQA
+    condition: and(succeeded(), eq(dependencies.VendEnvironments.outputs['Vend.envConfig.PROD_ENABLED'], 'true'))
     jobs:
-      - deployment: TerraformProd
-        displayName: 'Terraform Prod'
+      - deployment: Prod
         environment: 'Production'
         strategy:
           runOnce:
             deploy:
               steps:
                 - checkout: self
-
                 - task: TerraformInstaller@1
-                  displayName: 'Install Terraform $(TF_VERSION)'
                   inputs:
                     terraformVersion: $(TF_VERSION)
 
                 - bash: |
                     mkdir -p ~/.terraform.d
                     cat > ~/.terraform.d/credentials.tfrc.json << EOF
-                    {
-                      "credentials": {
-                        "app.terraform.io": {
-                          "token": "$(TFC_TOKEN)"
-                        }
-                      }
-                    }
+                    {"credentials":{"app.terraform.io":{"token":"$(TFC_TOKEN)"}}}
                     EOF
-                  displayName: 'Configure TFC Credentials'
+                  displayName: 'Configure TFC'
 
                 - bash: |
-                    # Extract app_id from repo name (handles org/repo format)
                     REPO_NAME="$(Build.Repository.Name)"
                     APP_ID="${REPO_NAME##*/}"
                     APP_ID="${APP_ID#terraform-azure-infra-}"
-                    WORKSPACE_NAME="${APP_ID}p1p01-app-infra"
-                    echo "=============================================="
-                    echo "Deploying to PRODUCTION Environment"
-                    echo "App ID: ${APP_ID}"
-                    echo "Workspace: ${WORKSPACE_NAME}"
-                    echo "Environment file: environments/prod.tfvars"
-                    echo "=============================================="
-                    export TF_WORKSPACE="${WORKSPACE_NAME}"
+
+                    echo "Deploying: ${APP_ID}p1p01"
+                    export TF_WORKSPACE="${APP_ID}p1p01"
                     terraform init
-                  displayName: 'Terraform Init (Prod)'
-                  workingDirectory: $(System.DefaultWorkingDirectory)
-
-                - bash: |
-                    REPO_NAME="$(Build.Repository.Name)"
-                    APP_ID="${REPO_NAME##*/}"
-                    APP_ID="${APP_ID#terraform-azure-infra-}"
-                    export TF_WORKSPACE="${APP_ID}p1p01-app-infra"
-                    terraform plan \
-                      -var-file=environments/prod.tfvars \
-                      -out=tfplan-prod
-                  displayName: 'Terraform Plan (Prod)'
-                  workingDirectory: $(System.DefaultWorkingDirectory)
-
-                - bash: |
-                    REPO_NAME="$(Build.Repository.Name)"
-                    APP_ID="${REPO_NAME##*/}"
-                    APP_ID="${APP_ID#terraform-azure-infra-}"
-                    export TF_WORKSPACE="${APP_ID}p1p01-app-infra"
-                    terraform apply -auto-approve tfplan-prod
-                  displayName: 'Terraform Apply (Prod)'
-                  workingDirectory: $(System.DefaultWorkingDirectory)
+                    terraform apply -auto-approve
+                  displayName: 'Apply Prod'

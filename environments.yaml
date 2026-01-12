@@ -1,0 +1,44 @@
+# =============================================================================
+# Environment Configuration
+# =============================================================================
+# Edit this file to enable/disable environments for your application.
+# When you merge changes to main, the pipeline will:
+#   1. Run .vending/ terraform to create/update TFC workspaces
+#   2. Deploy infrastructure to enabled environments
+#
+# To enable an environment:
+#   1. Set enabled: true
+#   2. Create a PR
+#   3. Get approval and merge
+# =============================================================================
+
+environments:
+  # ---------------------------------------------------------------------------
+  # Development Environment
+  # ---------------------------------------------------------------------------
+  - name: dev
+    tier: n                    # n = non-prod
+    environment_code: d        # d = dev
+    sequence: "01"
+    auto_apply: true           # Auto-apply after successful plan
+    enabled: true              # Dev enabled by default
+
+  # ---------------------------------------------------------------------------
+  # QA Environment
+  # ---------------------------------------------------------------------------
+  - name: qa
+    tier: n                    # n = non-prod
+    environment_code: q        # q = qa
+    sequence: "01"
+    auto_apply: false          # Require manual approval
+    enabled: false             # Enable when ready for QA testing
+
+  # ---------------------------------------------------------------------------
+  # Production Environment
+  # ---------------------------------------------------------------------------
+  - name: prod
+    tier: p                    # p = prod
+    environment_code: p        # p = prod
+    sequence: "01"
+    auto_apply: false          # Always require manual approval
+    enabled: false             # Enable when ready for production
