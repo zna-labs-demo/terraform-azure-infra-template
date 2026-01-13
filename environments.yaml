@@ -17,7 +17,7 @@ environments:
   # Development Environment
   # ---------------------------------------------------------------------------
   - name: dev
-    tier: n                    # n = non-prod
+    tier: "n"                    # n = non-prod
     environment_code: d        # d = dev
     sequence: "01"
     auto_apply: true           # Auto-apply after successful plan
@@ -27,7 +27,7 @@ environments:
   # QA Environment
   # ---------------------------------------------------------------------------
   - name: qa
-    tier: n                    # n = non-prod
+    tier: "n"                    # n = non-prod
     environment_code: q        # q = qa
     sequence: "01"
     auto_apply: false          # Require manual approval
@@ -37,7 +37,7 @@ environments:
   # Production Environment
   # ---------------------------------------------------------------------------
   - name: prod
-    tier: p                    # p = prod
+    tier: "p"                    # p = prod
     environment_code: p        # p = prod
     sequence: "01"
     auto_apply: false          # Always require manual approval

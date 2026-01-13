@@ -24,8 +24,8 @@ resource "tfe_workspace" "environment" {
     "app:${var.app_id}",
     "env:${each.value.environment_name}",
     "tier:${each.value.tier}",
-    "cost-center:${var.cost_center}",
-    "owner:${replace(var.owner_email, "@", "-at-")}",
+    "cost-center:${lower(replace(var.cost_center, "-", ""))}",
+    "owner:${lower(replace(replace(var.owner_email, "@", "-at-"), ".", "-"))}",
     "managed-by:gitops-vending"
   ]
 }

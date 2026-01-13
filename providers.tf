@@ -31,13 +31,13 @@ terraform {
   }
 
   # Terraform Cloud workspace configuration
-  # Workspaces are created by the subscription vending process (3 per app)
+  # Workspaces are created by the gitops vending process (environments.yaml)
   # TF_WORKSPACE environment variable overrides the tag selection in CI/CD
   cloud {
     organization = "zna-labs"
 
     workspaces {
-      tags = ["managed-by:subscription-vending"]
+      tags = ["managed-by:gitops-vending"]
     }
   }
 }
