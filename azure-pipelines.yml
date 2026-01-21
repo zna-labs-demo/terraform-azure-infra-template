@@ -31,8 +31,13 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  TF_VERSION: '1.9.0'
-  TF_IN_AUTOMATION: 'true'
+  # Link to the project's secrets variable group (created by vending process)
+  # System.TeamProject equals the app_id since ADO project is named after the app
+  - group: ${{ variables['System.TeamProject'] }}-secrets
+  - name: TF_VERSION
+    value: '1.9.0'
+  - name: TF_IN_AUTOMATION
+    value: 'true'
 
 stages:
   # ===========================================================================
