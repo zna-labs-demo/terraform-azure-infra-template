@@ -4,6 +4,10 @@
 # Creates TFC workspaces for each enabled environment in environments.yaml
 # This is the heart of the GitOps approach - teams control which environments
 # exist by editing environments.yaml
+#
+# SECURITY: Azure credentials are NOT stored per-workspace. Instead, the
+# Azure OIDC Variable Set is attached, providing dynamic credentials via
+# TFC's OIDC token exchange with Azure AD.
 # =============================================================================
 
 resource "tfe_workspace" "environment" {
@@ -31,52 +35,26 @@ resource "tfe_workspace" "environment" {
 }
 
 # =============================================================================
-# Workspace Variables - Azure Credentials
+# Azure OIDC Variable Set Attachment
+# =============================================================================
+# Attach the organization-wide Azure OIDC Variable Set to each environment
+# workspace. This provides ARM_TENANT_ID, ARM_SUBSCRIPTION_ID, and the
+# TFC_AZURE_* variables needed for OIDC authentication.
+#
+# NO secrets are stored - authentication uses TFC's OIDC token exchange.
 # =============================================================================
 
-resource "tfe_variable" "arm_client_id" {
+resource "tfe_workspace_variable_set" "azure_oidc" {
   for_each = local.workspace_configs
 
-  key          = "ARM_CLIENT_ID"
-  value        = var.azure_client_id
-  category     = "env"
-  workspace_id = tfe_workspace.environment[each.key].id
-  description  = "Azure Service Principal Client ID"
-}
-
-resource "tfe_variable" "arm_client_secret" {
-  for_each = local.workspace_configs
-
-  key          = "ARM_CLIENT_SECRET"
-  value        = var.azure_client_secret
-  category     = "env"
-  sensitive    = true
-  workspace_id = tfe_workspace.environment[each.key].id
-  description  = "Azure Service Principal Client Secret"
-}
-
-resource "tfe_variable" "arm_tenant_id" {
-  for_each = local.workspace_configs
-
-  key          = "ARM_TENANT_ID"
-  value        = var.azure_tenant_id
-  category     = "env"
-  workspace_id = tfe_workspace.environment[each.key].id
-  description  = "Azure Tenant ID"
-}
-
-resource "tfe_variable" "arm_subscription_id" {
-  for_each = local.workspace_configs
-
-  key          = "ARM_SUBSCRIPTION_ID"
-  value        = var.azure_subscription_id
-  category     = "env"
-  workspace_id = tfe_workspace.environment[each.key].id
-  description  = "Azure Subscription ID"
+  workspace_id    = tfe_workspace.environment[each.key].id
+  variable_set_id = var.azure_oidc_variable_set_id
 }
 
 # =============================================================================
-# Workspace Variables - Terraform Variables
+# Workspace Variables - Terraform Variables (Non-Sensitive)
+# =============================================================================
+# These are application-specific values, not credentials.
 # =============================================================================
 
 resource "tfe_variable" "app_id" {

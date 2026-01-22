@@ -2,7 +2,10 @@
 # Input Variables - Environment Vending
 # =============================================================================
 # These variables are set by central vending on the {app_id}-vending workspace
-# via TF_VAR_* environment variables
+# via TF_VAR_* environment variables.
+#
+# NOTE: Azure credentials are NOT passed through. Environment workspaces
+# receive Azure OIDC configuration via a TFC Variable Set attachment.
 # =============================================================================
 
 variable "tfc_org" {
@@ -31,25 +34,12 @@ variable "vnet_cidr" {
 }
 
 # -----------------------------------------------------------------------------
-# Azure Credentials (passed through to environment workspaces)
+# Azure OIDC Variable Set
 # -----------------------------------------------------------------------------
-variable "azure_client_id" {
-  description = "Azure Service Principal Client ID"
-  type        = string
-}
-
-variable "azure_client_secret" {
-  description = "Azure Service Principal Client Secret"
-  type        = string
-  sensitive   = true
-}
-
-variable "azure_tenant_id" {
-  description = "Azure Tenant ID"
-  type        = string
-}
-
-variable "azure_subscription_id" {
-  description = "Azure Subscription ID"
+# Instead of passing Azure credentials through, we attach a Variable Set
+# that contains the OIDC configuration. This is more secure and centralized.
+# -----------------------------------------------------------------------------
+variable "azure_oidc_variable_set_id" {
+  description = "TFC Variable Set ID containing Azure OIDC credentials"
   type        = string
 }
