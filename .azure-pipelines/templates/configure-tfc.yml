@@ -1,0 +1,30 @@
+# =============================================================================
+# Template: Configure Terraform Cloud Credentials
+# =============================================================================
+# Sets up TFC credentials for terraform CLI to communicate with TFC.
+#
+# Usage:
+#   - template: .azure-pipelines/templates/configure-tfc.yml
+#     parameters:
+#       tfcToken: $(TFC_TOKEN)
+# =============================================================================
+
+parameters:
+  - name: tfcToken
+    type: string
+    displayName: 'Terraform Cloud API Token'
+
+steps:
+  - bash: |
+      mkdir -p ~/.terraform.d
+      cat > ~/.terraform.d/credentials.tfrc.json << EOF
+      {
+        "credentials": {
+          "app.terraform.io": {
+            "token": "${{ parameters.tfcToken }}"
+          }
+        }
+      }
+      EOF
+      echo "TFC credentials configured"
+    displayName: 'Configure TFC Credentials'
