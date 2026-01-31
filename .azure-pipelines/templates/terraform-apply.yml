@@ -1,0 +1,124 @@
+# =============================================================================
+# Template: Terraform Apply with Enhanced Error Visibility
+# =============================================================================
+# Runs terraform init and apply with:
+# - Clear visual headers showing workspace and TFC URL
+# - Error summary extraction for quick debugging
+# - Success/failure banners
+#
+# Usage:
+#   - template: .azure-pipelines/templates/terraform-apply.yml
+#     parameters:
+#       environment: 'Dev'
+#       workspaceSuffix: 'n1d01'
+#       tfcOrg: $(TFC_ORG)
+#       workingDirectory: '.'
+# =============================================================================
+
+parameters:
+  - name: environment
+    type: string
+    displayName: 'Environment name for display (e.g., Dev, QA, Prod, Vending)'
+
+  - name: workspaceSuffix
+    type: string
+    displayName: 'Workspace suffix (e.g., n1d01, n1q01, p1p01, -vending)'
+
+  - name: tfcOrg
+    type: string
+    displayName: 'Terraform Cloud Organization'
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+    displayName: 'Working directory for terraform commands'
+
+steps:
+  - bash: |
+      set -o pipefail
+
+      # Extract App ID from repo name
+      REPO_NAME="$(Build.Repository.Name)"
+      APP_ID="${REPO_NAME##*/}"
+      APP_ID="${APP_ID#terraform-azure-infra-}"
+
+      # Build workspace name
+      WORKSPACE="${APP_ID}${{ parameters.workspaceSuffix }}"
+      TFC_ORG="${{ parameters.tfcOrg }}"
+      ENV_NAME="${{ parameters.environment }}"
+      WORKING_DIR="${{ parameters.workingDirectory }}"
+
+      # Export for other steps
+      echo "##vso[task.setvariable variable=APP_ID]${APP_ID}"
+      echo "##vso[task.setvariable variable=TF_WORKSPACE_NAME]${WORKSPACE}"
+
+      # Print header
+      echo ""
+      echo "╔══════════════════════════════════════════════════════════════════════════╗"
+      printf "║  %-72s  ║\n" "DEPLOYING ${ENV_NAME^^} ENVIRONMENT"
+      echo "╠══════════════════════════════════════════════════════════════════════════╣"
+      printf "║  %-72s  ║\n" "App ID:     ${APP_ID}"
+      printf "║  %-72s  ║\n" "Workspace:  ${WORKSPACE}"
+      printf "║  %-72s  ║\n" "TFC Org:    ${TFC_ORG}"
+      echo "╠══════════════════════════════════════════════════════════════════════════╣"
+      printf "║  %-72s  ║\n" "TFC URL: https://app.terraform.io/app/${TFC_ORG}/workspaces/${WORKSPACE}"
+      echo "╚══════════════════════════════════════════════════════════════════════════╝"
+      echo ""
+
+      # Change to working directory if specified
+      if [ "${WORKING_DIR}" != "." ]; then
+        echo "▶ Changing to directory: ${WORKING_DIR}"
+        cd "${WORKING_DIR}"
+      fi
+
+      export TF_WORKSPACE="${WORKSPACE}"
+
+      # Initialize
+      echo ""
+      echo "▶ Initializing Terraform..."
+      echo "────────────────────────────────────────────────────────────────────────────"
+      if ! terraform init -no-color 2>&1 | tee /tmp/tf_init.log; then
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════════════════╗"
+        echo "║  ❌ TERRAFORM INIT FAILED                                                 ║"
+        echo "╚══════════════════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "ERROR DETAILS:"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        grep -A5 "Error:" /tmp/tf_init.log || tail -20 /tmp/tf_init.log
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        exit 1
+      fi
+      echo "────────────────────────────────────────────────────────────────────────────"
+
+      # Apply
+      echo ""
+      echo "▶ Applying Terraform configuration..."
+      echo "────────────────────────────────────────────────────────────────────────────"
+      if ! terraform apply -auto-approve -no-color 2>&1 | tee /tmp/tf_apply.log; then
+        echo "────────────────────────────────────────────────────────────────────────────"
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════════════════╗"
+        echo "║  ❌ TERRAFORM APPLY FAILED                                                ║"
+        echo "╠══════════════════════════════════════════════════════════════════════════╣"
+        printf "║  %-72s  ║\n" "View full logs in Terraform Cloud:"
+        printf "║  %-72s  ║\n" "https://app.terraform.io/app/${TFC_ORG}/workspaces/${WORKSPACE}"
+        echo "╚══════════════════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "ERROR SUMMARY:"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        # Extract key error messages
+        grep -E "(Error:|error:|AADSTS|unauthorized|denied|failed|forbidden|invalid)" /tmp/tf_apply.log | head -25 || tail -30 /tmp/tf_apply.log
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        exit 1
+      fi
+      echo "────────────────────────────────────────────────────────────────────────────"
+
+      echo ""
+      echo "╔══════════════════════════════════════════════════════════════════════════╗"
+      printf "║  %-72s  ║\n" "✅ ${ENV_NAME^^} DEPLOYMENT SUCCESSFUL"
+      echo "╚══════════════════════════════════════════════════════════════════════════╝"
+      echo ""
+    displayName: 'Apply ${{ parameters.environment }}'
