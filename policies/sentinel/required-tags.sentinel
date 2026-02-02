@@ -1,0 +1,71 @@
+# =============================================================================
+# Sentinel Policy: Required Tags
+# =============================================================================
+# Ensures all taggable Azure resources have required tags.
+#
+# COMPARISON TO AZURE POLICY:
+# - Azure Policy: Can require tags, blocks at deploy time
+# - Sentinel: Catches missing tags during plan, before any deployment
+#
+# Additional benefit: Sentinel can check the TAG VALUES match patterns,
+# not just that tags exist.
+# =============================================================================
+
+import "tfplan/v2" as tfplan
+import "strings"
+
+# Required tags that must be present on all resources
+required_tags = ["environment", "app_id", "cost_center", "managed_by"]
+
+# Get all Azure resources that support tags
+taggable_resources = filter tfplan.resource_changes as _, rc {
+    rc.provider_name is "registry.terraform.io/hashicorp/azurerm" and
+    rc.mode is "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Check each resource for required tags
+tag_violations = []
+for taggable_resources as address, rc {
+    resource_tags = rc.change.after.tags else {}
+
+    if resource_tags is null {
+        resource_tags = {}
+    }
+
+    missing_tags = []
+    for required_tags as tag {
+        if tag not in keys(resource_tags) {
+            append(missing_tags, tag)
+        }
+    }
+
+    if length(missing_tags) > 0 {
+        append(tag_violations, {
+            "address": address,
+            "missing_tags": missing_tags,
+        })
+    }
+}
+
+# Print violations
+if length(tag_violations) > 0 {
+    print("═══════════════════════════════════════════════════════════════════")
+    print("  SENTINEL POLICY VIOLATION: Required Tags")
+    print("═══════════════════════════════════════════════════════════════════")
+    print("")
+    print("  The following resources are missing required tags:")
+    print("")
+    for tag_violations as v {
+        print("  ❌ ", v.address)
+        print("      Missing: ", v.missing_tags)
+        print("")
+    }
+    print("  Required tags: ", required_tags)
+    print("═══════════════════════════════════════════════════════════════════")
+}
+
+# Main rule
+main = rule {
+    length(tag_violations) is 0
+}

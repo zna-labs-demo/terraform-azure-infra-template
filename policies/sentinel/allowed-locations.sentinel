@@ -1,0 +1,59 @@
+# =============================================================================
+# Sentinel Policy: Allowed Locations
+# =============================================================================
+# Restricts Azure resources to approved regions.
+#
+# COMPARISON TO AZURE POLICY:
+# - Azure Policy: Blocks at Azure API level AFTER terraform apply starts
+# - Sentinel: Blocks during plan phase BEFORE any Azure API calls
+#
+# This provides "shift-left" governance - catching violations earlier
+# in the pipeline with faster feedback.
+# =============================================================================
+
+import "tfplan/v2" as tfplan
+
+# Define allowed Azure locations
+allowed_locations = ["southcentralus", "centralus"]
+
+# Get all Azure resources being created or updated
+azure_resources = filter tfplan.resource_changes as _, rc {
+    rc.provider_name is "registry.terraform.io/hashicorp/azurerm" and
+    rc.mode is "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Check each resource's location
+location_violations = []
+for azure_resources as address, rc {
+    location = rc.change.after.location else null
+    if location is not null and location not in allowed_locations {
+        append(location_violations, {
+            "address": address,
+            "location": location,
+            "allowed": allowed_locations,
+        })
+    }
+}
+
+# Print violations for clear feedback
+if length(location_violations) > 0 {
+    print("═══════════════════════════════════════════════════════════════════")
+    print("  SENTINEL POLICY VIOLATION: Allowed Locations")
+    print("═══════════════════════════════════════════════════════════════════")
+    print("")
+    print("  The following resources use disallowed locations:")
+    print("")
+    for location_violations as v {
+        print("  ❌ ", v.address)
+        print("      Location: ", v.location)
+        print("      Allowed:  ", v.allowed)
+        print("")
+    }
+    print("═══════════════════════════════════════════════════════════════════")
+}
+
+# Main rule - fails if any violations exist
+main = rule {
+    length(location_violations) is 0
+}

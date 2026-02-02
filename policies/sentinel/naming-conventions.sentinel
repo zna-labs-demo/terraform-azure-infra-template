@@ -1,0 +1,72 @@
+# =============================================================================
+# Sentinel Policy: Resource Naming Conventions
+# =============================================================================
+# Enforces ZNA naming standards on Azure resources.
+#
+# UNIQUE TO SENTINEL - Azure Policy CANNOT do this!
+# Azure Policy only validates resource properties, not resource names
+# in a flexible pattern-matching way.
+#
+# Pattern: [prefix]-[app_id]-[environment]
+# Example: rg-a2026013102-dev, st-a2026013102-dev
+# =============================================================================
+
+import "tfplan/v2" as tfplan
+import "strings"
+
+# Naming patterns by resource type (regex)
+# App ID pattern: a followed by digits
+naming_patterns = {
+    "azurerm_resource_group":  "^rg-a[0-9]+-[a-z]+$",
+    "azurerm_storage_account": "^sta[0-9]+[a-z]+$",  # No hyphens allowed in storage names
+    "azurerm_key_vault":       "^kv-a[0-9]+-[a-z]+$",
+}
+
+# Get resources being created
+resources_to_check = filter tfplan.resource_changes as _, rc {
+    rc.provider_name is "registry.terraform.io/hashicorp/azurerm" and
+    rc.mode is "managed" and
+    rc.change.actions contains "create" and
+    rc.type in keys(naming_patterns)
+}
+
+# Check naming conventions
+naming_violations = []
+for resources_to_check as address, rc {
+    resource_name = rc.change.after.name else ""
+    expected_pattern = naming_patterns[rc.type]
+
+    if resource_name not matches expected_pattern {
+        append(naming_violations, {
+            "address": address,
+            "type": rc.type,
+            "name": resource_name,
+            "pattern": expected_pattern,
+        })
+    }
+}
+
+# Print violations
+if length(naming_violations) > 0 {
+    print("═══════════════════════════════════════════════════════════════════")
+    print("  SENTINEL POLICY VIOLATION: Naming Conventions")
+    print("═══════════════════════════════════════════════════════════════════")
+    print("")
+    print("  ⚠️  Azure Policy CANNOT enforce naming - only Sentinel can!")
+    print("")
+    print("  The following resources violate naming standards:")
+    print("")
+    for naming_violations as v {
+        print("  ❌ ", v.address)
+        print("      Name:     ", v.name)
+        print("      Type:     ", v.type)
+        print("      Pattern:  ", v.pattern)
+        print("")
+    }
+    print("═══════════════════════════════════════════════════════════════════")
+}
+
+# Main rule
+main = rule {
+    length(naming_violations) is 0
+}

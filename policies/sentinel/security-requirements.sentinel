@@ -1,0 +1,95 @@
+# =============================================================================
+# Sentinel Policy: Security Requirements
+# =============================================================================
+# Enforces security best practices on Azure resources.
+#
+# Both Azure Policy and Sentinel can check these, but Sentinel:
+# - Catches issues before deployment attempt
+# - Can check Terraform-specific configurations
+# - Provides faster feedback in the CI/CD pipeline
+# =============================================================================
+
+import "tfplan/v2" as tfplan
+
+# =============================================================================
+# Rule 1: Storage accounts must use TLS 1.2 or higher
+# =============================================================================
+storage_accounts = filter tfplan.resource_changes as _, rc {
+    rc.type is "azurerm_storage_account" and
+    rc.mode is "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+tls_violations = []
+for storage_accounts as address, rc {
+    min_tls = rc.change.after.min_tls_version else "TLS1_0"
+    if min_tls not in ["TLS1_2", "TLS1_3"] {
+        append(tls_violations, {
+            "address": address,
+            "current_tls": min_tls,
+        })
+    }
+}
+
+# =============================================================================
+# Rule 2: Key Vaults must have soft delete enabled
+# =============================================================================
+key_vaults = filter tfplan.resource_changes as _, rc {
+    rc.type is "azurerm_key_vault" and
+    rc.mode is "managed" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+soft_delete_violations = []
+for key_vaults as address, rc {
+    # soft_delete is now always enabled by default in newer Azure API versions
+    # but we check soft_delete_retention_days is reasonable
+    retention = rc.change.after.soft_delete_retention_days else 0
+    if retention < 7 {
+        append(soft_delete_violations, {
+            "address": address,
+            "retention_days": retention,
+        })
+    }
+}
+
+# =============================================================================
+# Print all violations
+# =============================================================================
+all_violations = length(tls_violations) + length(soft_delete_violations)
+
+if all_violations > 0 {
+    print("═══════════════════════════════════════════════════════════════════")
+    print("  SENTINEL POLICY VIOLATION: Security Requirements")
+    print("═══════════════════════════════════════════════════════════════════")
+    print("")
+
+    if length(tls_violations) > 0 {
+        print("  📋 Storage Account TLS Violations:")
+        print("     Requirement: min_tls_version must be TLS1_2 or TLS1_3")
+        print("")
+        for tls_violations as v {
+            print("  ❌ ", v.address)
+            print("      Current TLS: ", v.current_tls)
+            print("")
+        }
+    }
+
+    if length(soft_delete_violations) > 0 {
+        print("  📋 Key Vault Soft Delete Violations:")
+        print("     Requirement: soft_delete_retention_days >= 7")
+        print("")
+        for soft_delete_violations as v {
+            print("  ❌ ", v.address)
+            print("      Retention Days: ", v.retention_days)
+            print("")
+        }
+    }
+
+    print("═══════════════════════════════════════════════════════════════════")
+}
+
+# Main rule
+main = rule {
+    all_violations is 0
+}
